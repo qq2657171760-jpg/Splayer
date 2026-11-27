@@ -274,8 +274,10 @@ function buildAndroidAPI() {
     onYtProgress(handler: (data: { downloaded: number; total: number; percent: number }) => void) {
       let h1: { remove(): void } | null = null;
 
-      YtDownloadNative.addListener("ytProgress", handler as (d: { percent: number }) => void)
-        .then((h) => { h1 = h; }).catch(noop);
+      YtDownloadNative.addListener("ytProgress", ({ percent }) => {
+        // Android currently reports percentage only; do not invent byte counts.
+        handler({ downloaded: 0, total: 0, percent });
+      }).then((h) => { h1 = h; }).catch(noop);
 
       return () => { h1?.remove(); };
     },
