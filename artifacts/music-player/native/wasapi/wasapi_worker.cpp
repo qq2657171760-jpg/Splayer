@@ -233,8 +233,8 @@ bool ProbeDevices() {
   UINT count = 0;
   devices->GetCount(&count);
   bool first = true;
-  const UINT32 rates[] = {44100, 48000, 88200, 96000, 176400, 192000};
-  const WORD bits[] = {16, 24, 32};
+  const UINT32 rates[] = {32000, 44100, 48000, 64000, 88200, 96000, 176400, 192000, 352800, 384000};
+  const WORD bits[] = {8, 16, 24, 32};
   for (UINT i = 0; i < count; ++i) {
     IMMDevice* device = nullptr;
     IAudioClient* client = nullptr;
@@ -264,15 +264,38 @@ bool ProbeDevices() {
             candidate.wBitsPerSample = depth;
             candidate.nBlockAlign = static_cast<WORD>(channels * depth / 8);
             candidate.nAvgBytesPerSec = rate * candidate.nBlockAlign;
-            if (SupportsExclusive(client, &candidate)) supported.push_back(FormatLabel(rate, depth, channels, false));
+            if (SupportsExclusive(client, &candidate)) {
+              supported.push_back(FormatLabel(rate, depth, channels, false));
+            }
+
+            // Probe IEEE Float separately; the source float payload can be passed
+            // unchanged when the endpoint accepts this exact sample format.
+            if (depth == 32 || depth == 64) {
+              WAVEFORMATEX floating{};
+              floating.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+              floating.nChannels = channels;
+              floating.nSamplesPerSec = rate;
+              floating.wBitsPerSample = depth;
+              floating.nBlockAlign = static_cast<WORD>(channels * depth / 8);
+              floating.nAvgBytesPerSec = rate * floating.nBlockAlign;
+              if (SupportsExclusive(client, &floating)) {
+                supported.push_back(FormatLabel(rate, depth, channels, true));
+              }
+            }
           }
         }
       }
       if (!first) json += ",";
       first = false;
+      bool mixFloat = false;
+      if (mix) {
+        mixFloat = mix->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+          (mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+            reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+      }
       json += "{\"name\":" + JsonEscape(label) + ",\"id\":" + JsonEscape(Utf8(id)) +
           ",\"mixFormat\":" + JsonEscape(mix ? FormatLabel(mix->nSamplesPerSec, mix->wBitsPerSample, mix->nChannels,
-            mix->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) : "unknown") + ",\"exclusiveFormats\":[";
+            mixFloat) : "unknown") + ",\"exclusiveFormats\":[";
       for (size_t n = 0; n < supported.size(); ++n) {
         if (n) json += ",";
         json += JsonEscape(supported[n]);
@@ -400,6 +423,20 @@ int Play(const std::wstring& path) {
       if (wait != WAIT_OBJECT_0) continue;
       if (paused || g_stop.load()) continue;
 
+      // Do not signal natural end until the last submitted PCM buffer has
+      // actually drained to the endpoint. Stopping immediately after queueing
+      // the final block can truncate its tail.
+      if (positionFrames >= totalFrames) {
+        UINT32 paddingFrames = 0;
+        hr = client->GetCurrentPadding(&paddingFrames);
+        if (SUCCEEDED(hr) && paddingFrames == 0) {
+          Emit("{\"type\":\"ended\"}");
+          g_stop.store(true);
+          break;
+        }
+        continue;
+      }
+
       BYTE* buffer = nullptr;
       const UINT32 frames = bufferFrames;
       hr = render->GetBuffer(frames, &buffer);
@@ -431,11 +468,7 @@ int Play(const std::wstring& path) {
             std::to_string(static_cast<double>(positionFrames) / wav.sampleRate) + "}");
         lastProgress = now;
       }
-      if (positionFrames >= totalFrames) {
-        Emit("{\"type\":\"ended\"}");
-        g_stop.store(true);
-        break;
-      }
+      // End notification is emitted after WASAPI reports that padding drained.
     }
     client->Stop();
     g_stop.store(true);
