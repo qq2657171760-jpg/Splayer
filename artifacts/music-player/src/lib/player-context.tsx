@@ -219,6 +219,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
   const [volume, setVolumeState] = useState<number>(() => {
     const saved = localStorage.getItem("player-volume");
     if (saved !== null) {
@@ -757,6 +759,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (audio.paused) {
+      const activeTrack = currentTrackId
+        ? tracksRef.current.find((t) => t.id === currentTrackId)
+        : undefined;
+      if (activeTrack && /\\.wav$/i.test(activeTrack.file?.name ?? "") &&
+          platformAPI?.platform === "win32" &&
+          localStorage.getItem("audio-output-mode") !== "shared") {
+        playTrackById(activeTrack.id);
+        return;
+      }
       ensureWA(audio).then(() => audio.play().catch(() => {}));
     } else {
       audio.pause();
@@ -869,6 +880,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setIsPlaying(true);
         if (typeof event.duration === "number") setDuration(event.duration);
         setCurrentTime(0);
+        if (countedTrackIdRef.current !== activeId) {
+          countedTrackIdRef.current = activeId;
+          const now = Date.now();
+          setTracks((prev) => prev.map((t) =>
+            t.id === activeId
+              ? { ...t, playCount: (t.playCount ?? 0) + 1, lastPlayedAt: now }
+              : t,
+          ));
+          saveStoredTrack(activeId, {
+            playCount: (tracksRef.current.find((t) => t.id === activeId)?.playCount ?? 0) + 1,
+            lastPlayedAt: now,
+          }).catch((error) => console.warn("Failed to save WASAPI play count", error));
+          try {
+            const key = "play-history";
+            const cutoff = Date.now() - 18 * 86_400_000;
+            const raw = localStorage.getItem(key);
+            const history: Array<{ id: string; ts: number }> = raw ? JSON.parse(raw) : [];
+            history.push({ id: activeId, ts: now });
+            localStorage.setItem(key, JSON.stringify(history.filter((entry) => entry.ts >= cutoff)));
+          } catch {}
+        }
       } else if (event.type === "progress") {
         if (typeof event.position === "number" && Number.isFinite(event.position)) {
           setCurrentTime(event.position);
@@ -1151,7 +1183,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           "last-session",
           JSON.stringify({
             trackId: id,
-            position: Math.floor(audio.currentTime),
+            position: Math.floor(wasapiTrackIdRef.current === id ? currentTimeRef.current : audio.currentTime),
             playlistId: currentPlaylistIdRef.current,
             playlistType: currentPlaylistTypeRef.current,
             playlistLabel: currentQueueLabelRef.current,
@@ -1805,15 +1837,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const skipBack = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.max(0, audio.currentTime - (skipBackSecsRef.current ?? 10));
-  }, []);
+    const position = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? currentTime
+      : (audio?.currentTime ?? 0);
+    const target = Math.max(0, position - (skipBackSecsRef.current ?? 10));
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", target);
+      setCurrentTime(target);
+    } else if (audio) {
+      audio.currentTime = target;
+    }
+  }, [currentTime]);
 
   const skipForward = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + (skipForwardSecsRef.current ?? 30));
-  }, []);
+    const position = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? currentTime
+      : (audio?.currentTime ?? 0);
+    const limit = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? duration
+      : (audio?.duration || Infinity);
+    const target = Math.min(limit || Infinity, position + (skipForwardSecsRef.current ?? 30));
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", target);
+      setCurrentTime(target);
+    } else if (audio) {
+      audio.currentTime = target;
+    }
+  }, [currentTime, duration]);
 
   const skipBackSecsRef    = useRef(skipBackSecs);
   skipBackSecsRef.current  = skipBackSecs;
