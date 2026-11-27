@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DownloadsView } from "@/components/DownloadsView";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import {
   getAllStoredTracks,
   getAllStoredPlaylists,
@@ -807,19 +808,14 @@ function WasapiOutputSection() {
 }
 
 function LanguageSection() {
-  const [language, setLanguage] = useState<"cn">("cn");
-  function changeLanguage(value: "cn") {
-    setLanguage(value);
-    try { localStorage.setItem("splayer-language", value); } catch {}
-    document.documentElement.lang = "zh-CN";
-    window.dispatchEvent(new CustomEvent("splayer-language-change", { detail: value }));
-  }
+  const { language, setLanguage, t } = useI18n();
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-foreground">界面语言</p>
-      <p className="text-xs text-muted-foreground">全局语言键为 cn（简体中文）。</p>
-      <select value={language} onChange={(event) => changeLanguage(event.target.value as "cn")} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" aria-label="界面语言">
-        <option value="cn">简体中文（cn）</option>
+      <p className="text-sm font-medium text-foreground">{t("Interface language")}</p>
+      <p className="text-xs text-muted-foreground">{t("Choose the language used throughout Splayer.")}</p>
+      <select value={language} onChange={(event) => setLanguage(event.target.value as "cn" | "en")} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" aria-label={t("Interface language")}>
+        <option value="cn">{t("Simplified Chinese")} (cn)</option>
+        <option value="en">{t("English")} (en)</option>
       </select>
     </div>
   );
