@@ -760,10 +760,6 @@ type WasapiProbe = {
 };
 
 function WasapiOutputSection() {
-  const [mode, setMode] = useState<"exclusive" | "shared">(() => {
-    try { return localStorage.getItem("audio-output-mode") === "shared" ? "shared" : "exclusive"; }
-    catch { return "exclusive"; }
-  });
   const [probe, setProbe] = useState<WasapiProbe | null>(null);
   const [probing, setProbing] = useState(false);
   const isWindows = platformAPI?.platform === "win32";
@@ -772,91 +768,36 @@ function WasapiOutputSection() {
     if (!platformAPI?.wasapiProbe) return;
     setProbing(true);
     try {
-      const result = await platformAPI.wasapiProbe();
-      setProbe(result);
+      setProbe(await platformAPI.wasapiProbe());
     } catch (error) {
       setProbe({ available: false, reason: error instanceof Error ? error.message : "设备探测失败" });
-    } finally {
-      setProbing(false);
-    }
-  }
-
-  function chooseMode(value: "exclusive" | "shared") {
-    setMode(value);
-    try { localStorage.setItem("audio-output-mode", value); } catch {}
+    } finally { setProbing(false); }
   }
 
   return (
     <div className="space-y-4 py-1">
       <div>
-        <p className="text-sm font-medium text-foreground">Windows 音频输出</p>
-        <p className="text-xs text-muted-foreground mt-1">
-          本地未压缩 WAV 优先使用 WASAPI 独占模式，按文件原采样率、声道数和位深直传 PCM。设备不支持或独占打开失败时自动回退系统共享播放。
-        </p>
+        <p className="text-sm font-medium text-foreground">自动音频输出</p>
+        <p className="text-xs text-muted-foreground mt-1">导入时自动识别格式：Windows 本地 WAV 优先使用 WASAPI 独占输出；MP3、FLAC 等其他格式使用系统共享播放。设备不支持或独占打开失败时自动回退共享播放。</p>
+        <p className="text-[11px] text-muted-foreground mt-2">WAV 独占输出按源文件采样率、声道数和位深直通，不重采样、不改位深，也不经过应用音量、均衡器、混响、变速或交叉淡化。请使用 DAC / 耳机 / Windows 设备硬件音量调节。</p>
       </div>
-
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-foreground">输出模式</p>
-        <button
-          onClick={() => chooseMode("exclusive")}
-          className={cn(
-            "w-full rounded-lg border px-3 py-2 text-left transition-colors",
-            mode === "exclusive" ? "border-primary bg-primary/10" : "border-card-border hover:border-primary/40",
-          )}
-        >
-          <p className="text-sm font-medium">WASAPI 独占优先（推荐）</p>
-          <p className="mt-1 text-xs text-muted-foreground">WAV 原始 PCM 直传；不重采样、不改位深、不经过 EQ / 混响 / 变速 / 淡入淡出</p>
-        </button>
-        <button
-          onClick={() => chooseMode("shared")}
-          className={cn(
-            "w-full rounded-lg border px-3 py-2 text-left transition-colors",
-            mode === "shared" ? "border-primary bg-primary/10" : "border-card-border hover:border-primary/40",
-          )}
-        >
-          <p className="text-sm font-medium">系统共享模式</p>
-          <p className="mt-1 text-xs text-muted-foreground">使用应用音量、均衡器、混响、变速和交叉淡化处理</p>
-        </button>
-        <p className="text-[11px] text-muted-foreground">模式切换在下一首曲目播放时生效。独占直通时应用音量及软件音效旁路，请使用 DAC / 耳机 / Windows 设备硬件音量调节。</p>
-      </div>
-
       <div className="border-t border-card-border pt-3 space-y-3">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium text-foreground">输出设备能力探测</p>
             <p className="text-xs text-muted-foreground mt-0.5">读取活动输出端点的共享格式和可用独占 PCM 格式</p>
           </div>
-          <Button size="sm" variant="outline" onClick={detectDevices} disabled={!isWindows || probing}>
-            {probing ? "探测中…" : "检测设备"}
-          </Button>
+          <Button size="sm" variant="outline" onClick={detectDevices} disabled={!isWindows || probing}>{probing ? "探测中…" : "检测设备"}</Button>
         </div>
-
-        {!isWindows && (
-          <p className="text-xs text-muted-foreground">WASAPI 仅支持 Windows 桌面版。</p>
-        )}
-        {probe && !probe.available && (
-          <p className="text-xs text-amber-500">{probe.reason || "没有检测到 WASAPI 输出设备"}</p>
-        )}
-        {probe?.available && (probe.devices?.length ?? 0) === 0 && (
-          <p className="text-xs text-muted-foreground">Windows 没有返回活动的音频输出端点。</p>
-        )}
+        {!isWindows && <p className="text-xs text-muted-foreground">WASAPI 仅支持 Windows 桌面版。</p>}
+        {probe && !probe.available && <p className="text-xs text-amber-500">{probe.reason || "没有检测到 WASAPI 输出设备"}</p>}
+        {probe?.available && (probe.devices?.length ?? 0) === 0 && <p className="text-xs text-muted-foreground">Windows 没有返回活动的音频输出端点。</p>}
         {probe?.devices?.map((device) => (
           <div key={device.id} className="rounded-lg border border-card-border p-3 space-y-2">
-            <div>
-              <p className="text-sm font-medium text-foreground">{device.name}</p>
-              <p className="text-xs text-muted-foreground">系统共享格式：{device.mixFormat}</p>
-            </div>
+            <div><p className="text-sm font-medium text-foreground">{device.name}</p><p className="text-xs text-muted-foreground">系统共享格式：{device.mixFormat}</p></div>
             <div>
               <p className="text-[11px] font-medium text-foreground mb-1">独占模式探测通过的 PCM 格式</p>
-              {device.exclusiveFormats.length ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {device.exclusiveFormats.map((format) => (
-                    <span key={format} className="rounded bg-muted px-2 py-1 text-[10px] text-muted-foreground">{format}</span>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-amber-500">未探测到通用 16 / 24 / 32 位 PCM 格式；播放时将自动回退共享模式。</p>
-              )}
+              {device.exclusiveFormats.length ? <div className="flex flex-wrap gap-1.5">{device.exclusiveFormats.map((format) => <span key={format} className="rounded bg-muted px-2 py-1 text-[10px] text-muted-foreground">{format}</span>)}</div> : <p className="text-xs text-amber-500">未探测到通用 16 / 24 / 32 位 PCM 格式；播放时将自动回退共享模式。</p>}
             </div>
           </div>
         ))}
@@ -866,14 +807,20 @@ function WasapiOutputSection() {
 }
 
 function LanguageSection() {
-  useEffect(() => {
-    try { localStorage.setItem("splayer-language", "cn"); } catch {}
+  const [language, setLanguage] = useState<"cn">("cn");
+  function changeLanguage(value: "cn") {
+    setLanguage(value);
+    try { localStorage.setItem("splayer-language", value); } catch {}
     document.documentElement.lang = "zh-CN";
-  }, []);
+    window.dispatchEvent(new CustomEvent("splayer-language-change", { detail: value }));
+  }
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <p className="text-sm font-medium text-foreground">界面语言</p>
-      <p className="text-xs text-muted-foreground">语言标识已设为简体中文（cn / zh-CN）。旧版未接入完整国际化的页面仍会保留原有英文文本。</p>
+      <p className="text-xs text-muted-foreground">全局语言键为 cn（简体中文）。</p>
+      <select value={language} onChange={(event) => changeLanguage(event.target.value as "cn")} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" aria-label="界面语言">
+        <option value="cn">简体中文（cn）</option>
+      </select>
     </div>
   );
 }
