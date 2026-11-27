@@ -629,13 +629,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const forceShared = wasapiForceSharedTrackRef.current === trackId;
     if (forceShared) wasapiForceSharedTrackRef.current = null;
     const sourcePath = track.path ?? (track.file as File & { path?: string }).path;
-    const isWav = /\.wav$/i.test(track.file?.name ?? "");
+    const isWav = track.audioFormat === "wav" || /\.wav$/i.test(track.file?.name ?? "") || /\.wav$/i.test(sourcePath ?? "");
     const tryWasapi = !forceShared &&
       platformAPI?.platform === "win32" &&
       isWav &&
       startAt <= 0 &&
       speedRef.current === 1 &&
-      localStorage.getItem("audio-output-mode") !== "shared" &&
       !!sourcePath &&
       !!platformAPI.wasapiStart;
 
@@ -778,9 +777,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const activeTrack = currentTrackId
         ? tracksRef.current.find((t) => t.id === currentTrackId)
         : undefined;
-      if (activeTrack && /\\.wav$/i.test(activeTrack.file?.name ?? "") &&
-          platformAPI?.platform === "win32" &&
-          localStorage.getItem("audio-output-mode") !== "shared") {
+      if (activeTrack && (activeTrack.audioFormat === "wav" || /\\.wav$/i.test(activeTrack.file?.name ?? "")) &&
+          platformAPI?.platform === "win32") {
         playTrackById(activeTrack.id);
         return;
       }
@@ -1325,6 +1323,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             embeddedCoverUrl: meta.coverUrl,
             customCoverUrl,
             path: (file as File & { path?: string }).path,
+            audioFormat: /\.wav$/i.test(file.name) || /^(audio\/wav|audio\/x-wav)$/i.test(file.type) ? "wav" : "other",
             addedAt,
             playCount,
             lastPlayedAt,
