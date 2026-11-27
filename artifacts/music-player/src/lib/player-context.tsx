@@ -811,7 +811,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const audio = audioRef.current;
     if (wasapiTrackIdRef.current === currentTrackId) {
-      if (currentTime > 3) { seek(0); return; }
+      if (currentTime > 3) {
+        void platformAPI?.wasapiCommand?.("seek", 0);
+        setCurrentTime(0);
+        return;
+      }
     } else if (audio && audio.currentTime > 3) {
       audio.currentTime = 0;
       return;
@@ -823,7 +827,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const p = (idx - 1 + list.length) % list.length;
     playTrackById(list[p].id);
-  }, [currentTrackId, playTrackById, currentTime, seek]);
+  }, [currentTrackId, playTrackById, currentTime]);
 
   // Stable refs so the onTrayAction handler never captures stale closures.
   const togglePlayRef = useRef(togglePlay);
