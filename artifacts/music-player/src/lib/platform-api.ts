@@ -123,9 +123,9 @@ const noopCleanup = () => noop;
 // ── Android implementation of the full electronAPI surface ───────────────────
 
 function buildAndroidAPI() {
-  // Typed as the full electronAPI shape via cast so call-sites need no changes.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const api: NonNullable<Window["electronAPI"]> = {
+  // Android intentionally implements only its native capabilities. Assert the
+  // shared bridge type here so Android is not forced to fake desktop-only APIs.
+  const api = {
     platform: "android",
 
     async scanLibrary() {
@@ -271,11 +271,13 @@ function buildAndroidAPI() {
       }
     },
 
-    onYtProgress(handler) {
+    onYtProgress(handler: (data: { downloaded: number; total: number; percent: number }) => void) {
       let h1: { remove(): void } | null = null;
 
-      YtDownloadNative.addListener("ytProgress", handler as (d: { percent: number }) => void)
-        .then((h) => { h1 = h; }).catch(noop);
+      YtDownloadNative.addListener("ytProgress", ({ percent }) => {
+        // Android currently reports percentage only; do not invent byte counts.
+        handler({ downloaded: 0, total: 0, percent });
+      }).then((h) => { h1 = h; }).catch(noop);
 
       return () => { h1?.remove(); };
     },
@@ -348,7 +350,7 @@ function buildAndroidAPI() {
     // Event subscriptions — no-ops; return an unsubscribe function.
     onYtProgressVideo: noopCleanup,
     onYtProgressMerge: noopCleanup,
-  };
+  } as unknown as NonNullable<Window["electronAPI"]>;
   return api;
 }
 

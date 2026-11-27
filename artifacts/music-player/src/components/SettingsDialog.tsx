@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DownloadsView } from "@/components/DownloadsView";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import {
   getAllStoredTracks,
   getAllStoredPlaylists,
@@ -751,9 +752,78 @@ function ButtonsSection() {
   );
 }
 
+// ── Windows WASAPI output ─────────────────────────────────────────────────────
+
+type WasapiProbe = {
+  available: boolean;
+  reason?: string;
+  devices?: Array<{ name: string; id: string; mixFormat: string; exclusiveFormats: string[] }>;
+};
+
+function WasapiOutputSection() {
+  const [probe, setProbe] = useState<WasapiProbe | null>(null);
+  const [probing, setProbing] = useState(false);
+  const isWindows = platformAPI?.platform === "win32";
+
+  async function detectDevices() {
+    if (!platformAPI?.wasapiProbe) return;
+    setProbing(true);
+    try {
+      setProbe(await platformAPI.wasapiProbe());
+    } catch (error) {
+      setProbe({ available: false, reason: error instanceof Error ? error.message : "设备探测失败" });
+    } finally { setProbing(false); }
+  }
+
+  return (
+    <div className="space-y-4 py-1">
+      <div>
+        <p className="text-sm font-medium text-foreground">自动音频输出</p>
+        <p className="text-xs text-muted-foreground mt-1">导入时自动识别格式：Windows 本地 WAV 优先使用 WASAPI 独占输出；MP3、FLAC 等其他格式使用系统共享播放。设备不支持或独占打开失败时自动回退共享播放。</p>
+        <p className="text-[11px] text-muted-foreground mt-2">WAV 独占输出按源文件采样率、声道数和位深直通，不重采样、不改位深，也不经过应用音量、均衡器、混响、变速或交叉淡化。请使用 DAC / 耳机 / Windows 设备硬件音量调节。</p>
+      </div>
+      <div className="border-t border-card-border pt-3 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">输出设备能力探测</p>
+            <p className="text-xs text-muted-foreground mt-0.5">读取活动输出端点的共享格式和可用独占 PCM 格式</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={detectDevices} disabled={!isWindows || probing}>{probing ? "探测中…" : "检测设备"}</Button>
+        </div>
+        {!isWindows && <p className="text-xs text-muted-foreground">WASAPI 仅支持 Windows 桌面版。</p>}
+        {probe && !probe.available && <p className="text-xs text-amber-500">{probe.reason || "没有检测到 WASAPI 输出设备"}</p>}
+        {probe?.available && (probe.devices?.length ?? 0) === 0 && <p className="text-xs text-muted-foreground">Windows 没有返回活动的音频输出端点。</p>}
+        {probe?.devices?.map((device) => (
+          <div key={device.id} className="rounded-lg border border-card-border p-3 space-y-2">
+            <div><p className="text-sm font-medium text-foreground">{device.name}</p><p className="text-xs text-muted-foreground">系统共享格式：{device.mixFormat}</p></div>
+            <div>
+              <p className="text-[11px] font-medium text-foreground mb-1">独占模式探测通过的 PCM 格式</p>
+              {device.exclusiveFormats.length ? <div className="flex flex-wrap gap-1.5">{device.exclusiveFormats.map((format) => <span key={format} className="rounded bg-muted px-2 py-1 text-[10px] text-muted-foreground">{format}</span>)}</div> : <p className="text-xs text-amber-500">未探测到通用 16 / 24 / 32 位 PCM 格式；播放时将自动回退共享模式。</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LanguageSection() {
+  const { language, setLanguage, t } = useI18n();
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium text-foreground">{t("Interface language")}</p>
+      <p className="text-xs text-muted-foreground">{t("Choose the language used throughout Splayer.")}</p>
+      <select value={language} onChange={(event) => setLanguage(event.target.value as "cn" | "en")} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" aria-label={t("Interface language")}>
+        <option value="cn">{t("Simplified Chinese")} (cn)</option>
+        <option value="en">{t("English")} (en)</option>
+      </select>
+    </div>
+  );
+}
+
 // ── SettingsDialog ────────────────────────────────────────────────────────────
 
-type Tab = "folders" | "downloads" | "behavior" | "buttons" | "backup";
+type Tab = "folders" | "downloads" | "behavior" | "buttons" | "backup" | "audio";
 
 interface Props {
   open: boolean;
@@ -802,7 +872,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-primary" />
-            Settings
+            设置
           </DialogTitle>
         </DialogHeader>
 
@@ -818,7 +888,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <FolderOpen className="w-3 h-3" />
-            Folders
+            文件夹
           </button>
           <button
             onClick={() => setTab("downloads")}
@@ -830,7 +900,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Download className="w-3 h-3" />
-            DL
+            下载
           </button>
           <button
             onClick={() => setTab("behavior")}
@@ -842,7 +912,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Monitor className="w-3 h-3" />
-            Behavior
+            行为
           </button>
           <button
             onClick={() => setTab("buttons")}
@@ -854,7 +924,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Gamepad2 className="w-3 h-3" />
-            Buttons
+            按键
           </button>
           <button
             onClick={() => setTab("backup")}
@@ -866,7 +936,19 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Archive className="w-3 h-3" />
-            Backup
+            备份
+          </button>
+          <button
+            onClick={() => setTab("audio")}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1 py-1.5 font-medium transition-colors",
+              tab === "audio"
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Monitor className="w-3 h-3" />
+            音频
           </button>
         </div>
 
@@ -921,7 +1003,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "downloads" && (
           <div className="py-1 overflow-x-hidden">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Download History
+              下载记录
             </p>
             <DownloadsView />
           </div>
@@ -934,7 +1016,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               <>
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    App Behavior
+                    应用行为
                   </p>
                   <div className="space-y-5">
                     <StartOnBootSection />
@@ -945,7 +1027,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                 <hr className="border-card-border" />
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    OS Media
+                    系统媒体
                   </p>
                   <OsMediaSection />
                 </div>
@@ -957,9 +1039,11 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                   <DiscordSection />
                 </div>
                 <hr className="border-card-border" />
+                <LanguageSection />
+                <hr className="border-card-border" />
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    Onboarding
+                    使用引导
                   </p>
                   <Button
                     variant="outline"
@@ -980,7 +1064,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "buttons" && (
           <div className="py-1 overflow-y-auto max-h-[420px]">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Player Controls
+              播放控制
             </p>
             <ButtonsSection />
           </div>
@@ -990,9 +1074,16 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "backup" && (
           <div className="py-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Backup &amp; Restore
+              备份与恢复
             </p>
             <BackupSection />
+          </div>
+        )}
+
+        {/* ── Audio output tab ── */}
+        {tab === "audio" && (
+          <div className="py-1 overflow-y-auto max-h-[480px]">
+            <WasapiOutputSection />
           </div>
         )}
 

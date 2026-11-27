@@ -7,15 +7,15 @@
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
-    "build:desktop": "BASE_PATH=./ PORT=5173 vite build --config vite.config.ts",
+    "build:desktop": "node scripts/build-desktop.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "pnpm run build:desktop && electron . --no-sandbox",
     "electron": "pnpm run build:desktop && electron . --no-sandbox",
     "dist:linux": "pnpm run build:desktop && electron-builder --linux AppImage --x64",
-    "dist:win": "node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win nsis --x64",
-    "build:win": "node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win nsis --x64",
-    "build:portable": "node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win portable --x64",
+    "dist:win": "node scripts/build-wasapi.mjs && node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win nsis --x64",
+    "build:win": "node scripts/build-wasapi.mjs && node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win nsis --x64",
+    "build:portable": "node scripts/build-wasapi.mjs && node scripts/prepare-win.mjs && pnpm run build:desktop && electron-builder --win portable --x64",
     "build:android": "BASE_PATH=./ PORT=5173 vite build --config vite.config.ts && cap sync android",
     "open:android": "cap open android"
   },
@@ -54,6 +54,10 @@
         {
           "from": "resources/ffmpeg.exe",
           "to": "ffmpeg.exe"
+        },
+        {
+          "from": "resources/wasapi/splayer-wasapi.exe",
+          "to": "wasapi/splayer-wasapi.exe"
         }
       ],
       "target": [

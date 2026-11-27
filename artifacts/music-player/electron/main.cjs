@@ -6,6 +6,35 @@ const fsSync = require("fs");
 const http = require("http");
 const os = require("os");
 
+// Native Windows WASAPI exclusive-mode PCM output worker.
+let _wasapiProcess = null;
+let _wasapiTrackId = null;
+let _wasapiSender = null;
+let _wasapiSawTerminalEvent = false;
+
+function _getWasapiWorkerPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "wasapi", "splayer-wasapi.exe")
+    : path.join(__dirname, "..", "resources", "wasapi", "splayer-wasapi.exe");
+}
+
+function _sendWasapiEvent(data) {
+  try {
+    if (_wasapiSender && !_wasapiSender.isDestroyed()) {
+      _wasapiSender.send("wasapi:event", { ...data, trackId: _wasapiTrackId });
+    }
+  } catch {}
+}
+
+function _stopWasapiWorker() {
+  const worker = _wasapiProcess;
+  _wasapiProcess = null;
+  _wasapiTrackId = null;
+  _wasapiSawTerminalEvent = true;
+  if (!worker) return;
+  try { worker.kill(); } catch {}
+}
+
 // ── Input validation helpers ──────────────────────────────────────────────────
 
 const _MAX_QUERY_LEN    = 300;
@@ -951,6 +980,117 @@ ipcMain.on("widget-init-position", (_event, { x, y }) => {
     y >= b.y && y < b.y + b.height - 30
   );
   if (onScreen) widgetWindow.setPosition(Math.round(x), Math.round(y));
+});
+
+// ── IPC: Windows WASAPI output ────────────────────────────────────────────────
+ipcMain.handle("wasapi:probe", async () => {
+  if (process.platform !== "win32") return { available: false, reason: "WASAPI 仅适用于 Windows 桌面版" };
+  const executable = _getWasapiWorkerPath();
+  if (!fsSync.existsSync(executable)) {
+    return { available: false, reason: "WASAPI 原生组件尚未构建；请使用本仓库的 Windows 安装包构建脚本" };
+  }
+  return await new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const child = require("child_process").spawn(executable, ["--probe"], {
+      windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      finish({ available: false, reason: "音频设备探测超时" });
+    }, 10000);
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", (err) => finish({ available: false, reason: err.message }));
+    child.on("close", () => {
+      try {
+        const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+        finish(line ? JSON.parse(line) : { available: false, reason: stderr.trim() || "WASAPI 探测没有返回结果" });
+      } catch {
+        finish({ available: false, reason: stderr.trim() || "无法解析 WASAPI 探测结果" });
+      }
+    });
+  });
+});
+
+ipcMain.handle("wasapi:start", async (event, { filePath, trackId } = {}) => {
+  if (process.platform !== "win32") return { success: false, error: "WASAPI 仅适用于 Windows" };
+  if (typeof filePath !== "string" || !path.isAbsolute(filePath) || path.extname(filePath).toLowerCase() !== ".wav") {
+    return { success: false, error: "WASAPI 只接受本地 WAV 文件路径" };
+  }
+  try {
+    if (!fsSync.statSync(filePath).isFile()) return { success: false, error: "音频文件不存在" };
+  } catch { return { success: false, error: "无法访问 WAV 文件" }; }
+
+  _stopWasapiWorker();
+  const executable = _getWasapiWorkerPath();
+  if (!fsSync.existsSync(executable)) return { success: false, error: "WASAPI 原生组件未安装" };
+
+  const child = require("child_process").spawn(executable, ["--play", filePath], {
+    windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
+  });
+  _wasapiProcess = child;
+  _wasapiTrackId = typeof trackId === "string" ? trackId.slice(0, 256) : null;
+  _wasapiSender = event.sender;
+  _wasapiSawTerminalEvent = false;
+  let stdoutBuffer = "";
+  child.stdout.on("data", (chunk) => {
+    if (_wasapiProcess !== child) return;
+    stdoutBuffer += chunk.toString("utf8");
+    let newline;
+    while ((newline = stdoutBuffer.indexOf("\n")) >= 0) {
+      const line = stdoutBuffer.slice(0, newline).trim();
+      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+      if (!line) continue;
+      try {
+        const message = JSON.parse(line);
+        if (message.type === "ended" || message.type === "fallback") _wasapiSawTerminalEvent = true;
+        _sendWasapiEvent(message);
+      } catch (err) {
+        console.warn("[WASAPI] Invalid worker event:", line.slice(0, 300), err?.message);
+      }
+    }
+  });
+  child.stderr.on("data", (chunk) => console.warn("[WASAPI]", chunk.toString("utf8").trim()));
+  child.on("error", (err) => {
+    if (_wasapiProcess !== child) return;
+    _sendWasapiEvent({ type: "fallback", reason: "WASAPI 组件启动失败：" + err.message });
+    _wasapiProcess = null;
+  });
+  child.on("close", (code) => {
+    // Ignore exit notifications from a previous stream after a rapid track change.
+    if (_wasapiProcess !== child) return;
+    _wasapiProcess = null;
+    if (!_wasapiSawTerminalEvent && code !== 0) {
+      _sendWasapiEvent({ type: "fallback", reason: "WASAPI 工作进程异常退出，已回退共享播放（代码 " + code + "）" });
+    }
+  });
+  return { success: true };
+});
+
+ipcMain.handle("wasapi:command", async (_event, { command, value } = {}) => {
+  if (!_wasapiProcess || _wasapiProcess.killed) return { success: false };
+  if (command === "pause" || command === "resume" || command === "stop") {
+    try { _wasapiProcess.stdin.write(command + "\n"); return { success: true }; }
+    catch { return { success: false }; }
+  }
+  if (command === "seek" && typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    try { _wasapiProcess.stdin.write("seek:" + value + "\n"); return { success: true }; }
+    catch { return { success: false }; }
+  }
+  return { success: false, error: "Unsupported WASAPI command" };
+});
+
+ipcMain.handle("wasapi:stop", async () => {
+  _stopWasapiWorker();
+  return { success: true };
 });
 
 // ── IPC: OS save-file dialog ────────────────────────────────────────────────
@@ -3194,6 +3334,7 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", () => {
+  _stopWasapiWorker();
   if (_drpcClient && _drpcReady) _drpcClient.clearActivity().catch(() => {});
 });
 

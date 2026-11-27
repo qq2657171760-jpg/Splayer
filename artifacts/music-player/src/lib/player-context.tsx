@@ -219,6 +219,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
   const [volume, setVolumeState] = useState<number>(() => {
     const saved = localStorage.getItem("player-volume");
     if (saved !== null) {
@@ -288,6 +290,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   eqGainsRef.current = eqGains;
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Native Windows WASAPI transport. A non-null track id means the native worker
+  // is starting or owns the current track; the force-shared ref prevents fallback
+  // events from recursively trying WASAPI for the same item.
+  const wasapiTrackIdRef = useRef<string | null>(null);
+  const wasapiActiveRef = useRef(false);
+  const wasapiPausedRef = useRef(false);
+  const wasapiForceSharedTrackRef = useRef<string | null>(null);
   const tracksRef = useRef<Track[]>([]);
   tracksRef.current = tracks;
   const playlistsRef = useRef<Playlist[]>([]);
@@ -379,7 +388,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const ensureWA = useCallback((el: HTMLAudioElement): Promise<void> => {
     // Create context on first call (must happen from a user gesture)
     if (!waCtxRef.current) {
-      const ctx = new AudioContext();
+      const ctx = new AudioContext({ latencyHint: "playback" });
       waCtxRef.current = ctx;
 
       const gains = eqGainsRef.current;
@@ -608,13 +617,62 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const queueRef = useRef<Track[]>([]);
   queueRef.current = effectiveQueue;
 
-  const playTrackById = useCallback((trackId: string) => {
+  const playTrackById = useCallback((trackId: string, startAt = 0) => {
     const audio = audioRef.current;
     const track = tracksRef.current.find((t) => t.id === trackId)
       ?? ephemeralTracksRef.current.find((t) => t.id === trackId);
     if (!audio || !track) return;
+
+    // On Windows, a local uncompressed WAV is sent to the native WASAPI
+    // worker before the Web Audio graph. It is accepted only at unity rate;
+    // the worker verifies exact source rate/channels/bit depth with the endpoint.
+    const forceShared = wasapiForceSharedTrackRef.current === trackId;
+    if (forceShared) wasapiForceSharedTrackRef.current = null;
+    const sourcePath = track.path ?? (track.file as File & { path?: string }).path;
+    const isWav = track.audioFormat === "wav" || /\.wav$/i.test(track.file?.name ?? "") || /\.wav$/i.test(sourcePath ?? "");
+    const tryWasapi = !forceShared &&
+      platformAPI?.platform === "win32" &&
+      isWav &&
+      startAt <= 0 &&
+      speedRef.current === 1 &&
+      !!sourcePath &&
+      !!platformAPI.wasapiStart;
+
+    // Terminate the previous native stream before changing the active source.
+    if (wasapiTrackIdRef.current) {
+      void platformAPI?.wasapiStop?.();
+      wasapiTrackIdRef.current = null;
+      wasapiActiveRef.current = false;
+      wasapiPausedRef.current = false;
+    }
     // Cancel any active crossfade
     cancelXf();
+
+    if (tryWasapi) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      countedTrackIdRef.current = null;
+      setCurrentTrackId(trackId);
+      setCurrentTime(0);
+      setDuration(track.duration || 0);
+      wasapiTrackIdRef.current = trackId;
+      wasapiPausedRef.current = false;
+      void platformAPI!.wasapiStart!(sourcePath!, trackId).then((result) => {
+        if (!result.success && wasapiTrackIdRef.current === trackId) {
+          wasapiTrackIdRef.current = null;
+          wasapiForceSharedTrackRef.current = trackId;
+          playTrackById(trackId);
+        }
+      }).catch(() => {
+        if (wasapiTrackIdRef.current === trackId) {
+          wasapiTrackIdRef.current = null;
+          wasapiForceSharedTrackRef.current = trackId;
+          playTrackById(trackId);
+        }
+      });
+      return;
+    }
     const isNewSrc = audio.src !== track.url;
     if (isNewSrc) {
       audio.src = track.url;
@@ -627,13 +685,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // audio if the context hasn't resumed yet.
     const effVol = mutedRef.current ? 0 : volumeRef.current;
     ensureWA(audio).then(() => {
-      if (isNewSrc && crossfadeEnabledRef.current && !mutedRef.current) {
-        audio.volume = 0;
-        audio.play().catch(() => {});
-        rampVolume(audio, 0, effVol, crossfadeSecsRef.current * 1000);
+      const startPlayback = () => {
+        if (startAt > 0) {
+          const boundedPosition = Math.min(
+            startAt,
+            Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : startAt,
+          );
+          try { audio.currentTime = boundedPosition; } catch {}
+          setCurrentTime(boundedPosition);
+        }
+        if (isNewSrc && crossfadeEnabledRef.current && !mutedRef.current) {
+          audio.volume = 0;
+          audio.play().catch(() => {});
+          rampVolume(audio, 0, effVol, crossfadeSecsRef.current * 1000);
+        } else {
+          audio.volume = effVol;
+          audio.play().catch(() => {});
+        }
+      };
+      if (startAt > 0 && audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+        audio.addEventListener("loadedmetadata", startPlayback, { once: true });
       } else {
-        audio.volume = effVol;
-        audio.play().catch(() => {});
+        startPlayback();
       }
     });
   }, [cancelXf, rampVolume, ensureWA]);
@@ -687,12 +760,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (wasapiTrackIdRef.current === currentTrackId) {
+      if (!wasapiActiveRef.current) return;
+      const nextPaused = !wasapiPausedRef.current;
+      wasapiPausedRef.current = nextPaused;
+      void platformAPI?.wasapiCommand?.(nextPaused ? "pause" : "resume");
+      setIsPlaying(!nextPaused);
+      return;
+    }
     if (currentTrackId === null) {
       const q = queueRef.current;
       if (q.length > 0) playTrackById(q[0].id);
       return;
     }
     if (audio.paused) {
+      const activeTrack = currentTrackId
+        ? tracksRef.current.find((t) => t.id === currentTrackId)
+        : undefined;
+            if (activeTrack && (activeTrack.audioFormat === "wav" || /\.wav$/i.test(activeTrack.file?.name ?? "")) &&
+          platformAPI?.platform === "win32") {
+        playTrackById(activeTrack.id);
+        return;
+      }
       ensureWA(audio).then(() => audio.play().catch(() => {}));
     } else {
       audio.pause();
@@ -735,7 +824,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     const audio = audioRef.current;
-    if (audio && audio.currentTime > 3) {
+    if (wasapiTrackIdRef.current === currentTrackId) {
+      if (currentTime > 3) {
+        void platformAPI?.wasapiCommand?.("seek", 0);
+        setCurrentTime(0);
+        return;
+      }
+    } else if (audio && audio.currentTime > 3) {
       audio.currentTime = 0;
       return;
     }
@@ -746,7 +841,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const p = (idx - 1 + list.length) % list.length;
     playTrackById(list[p].id);
-  }, [currentTrackId, playTrackById]);
+  }, [currentTrackId, playTrackById, currentTime]);
 
   // Stable refs so the onTrayAction handler never captures stale closures.
   const togglePlayRef = useRef(togglePlay);
@@ -760,8 +855,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
     if (repeat === "one") {
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
+      if (wasapiTrackIdRef.current === currentTrackId && currentTrackId) {
+        playTrackById(currentTrackId);
+      } else {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      }
       return;
     }
     const list = queueRef.current;
@@ -787,6 +886,74 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     next();
   }, [repeat, shuffle, currentTrackId, next, playTrackById]);
+
+  // Native WASAPI events share the same state model as the HTML audio path.
+  useEffect(() => {
+    const unsubscribe = platformAPI?.onWasapiEvent?.((event) => {
+      const activeId = wasapiTrackIdRef.current;
+      if (!activeId || event.trackId !== activeId) return;
+      if (event.type === "ready") {
+        wasapiActiveRef.current = true;
+        wasapiPausedRef.current = false;
+        setIsPlaying(true);
+        if (typeof event.duration === "number") setDuration(event.duration);
+        setCurrentTime(0);
+        if (countedTrackIdRef.current !== activeId) {
+          countedTrackIdRef.current = activeId;
+          const now = Date.now();
+          setTracks((prev) => prev.map((t) =>
+            t.id === activeId
+              ? { ...t, playCount: (t.playCount ?? 0) + 1, lastPlayedAt: now }
+              : t,
+          ));
+          saveStoredTrack(activeId, {
+            playCount: (tracksRef.current.find((t) => t.id === activeId)?.playCount ?? 0) + 1,
+            lastPlayedAt: now,
+          }).catch((error) => console.warn("Failed to save WASAPI play count", error));
+          try {
+            const key = "play-history";
+            const cutoff = Date.now() - 18 * 86_400_000;
+            const raw = localStorage.getItem(key);
+            const history: Array<{ id: string; ts: number }> = raw ? JSON.parse(raw) : [];
+            history.push({ id: activeId, ts: now });
+            localStorage.setItem(key, JSON.stringify(history.filter((entry) => entry.ts >= cutoff)));
+          } catch {}
+        }
+      } else if (event.type === "progress") {
+        if (typeof event.position === "number" && Number.isFinite(event.position)) {
+          setCurrentTime(event.position);
+        }
+        if (typeof event.duration === "number" && Number.isFinite(event.duration)) {
+          setDuration(event.duration);
+        }
+      } else if (event.type === "paused") {
+        wasapiPausedRef.current = true;
+        setIsPlaying(false);
+      } else if (event.type === "resumed") {
+        wasapiPausedRef.current = false;
+        setIsPlaying(true);
+      } else if (event.type === "fallback") {
+        wasapiActiveRef.current = false;
+        wasapiPausedRef.current = false;
+        wasapiTrackIdRef.current = null;
+        wasapiForceSharedTrackRef.current = activeId;
+        const fallbackPosition = currentTimeRef.current;
+        if (event.reason) {
+          console.warn("[WASAPI] Falling back to shared playback:", event.reason);
+          toast({ title: "WASAPI 独占输出不可用", description: "已自动切换到共享播放模式" });
+        }
+        playTrackById(activeId, fallbackPosition);
+      } else if (event.type === "ended") {
+        wasapiActiveRef.current = false;
+        wasapiPausedRef.current = false;
+        wasapiTrackIdRef.current = null;
+        setIsPlaying(false);
+        if (repeat === "one") playTrackById(activeId);
+        else handleEnded();
+      }
+    });
+    return unsubscribe;
+  }, [handleEnded, playTrackById, toast, repeat]);
 
   // Audio event listeners — re-attaches when handleEnded changes (i.e. track changes)
   useEffect(() => {
@@ -895,6 +1062,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (nextIdx === idx) return;
 
       const nextTrack = list[nextIdx];
+      // Let the current item finish naturally before a WAV target so the WAV
+      // always enters the native exclusive route instead of the crossfade graph.
+      if (/\\.wav$/i.test(nextTrack.file?.name ?? "")) return;
       xfActiveRef.current = true;
       stopFades();
 
@@ -987,6 +1157,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [ensureWA]); // ensureWA is stable (useCallback [])
 
+  // Exclusive raw PCM is unity-rate only. Honor a changed speed setting by
+  // stopping WASAPI and restarting through the normal shared/Web Audio path.
+  useEffect(() => {
+    const id = wasapiTrackIdRef.current;
+    if (!id || speed === 1) return;
+    wasapiTrackIdRef.current = null;
+    wasapiActiveRef.current = false;
+    void platformAPI?.wasapiStop?.();
+    wasapiForceSharedTrackRef.current = id;
+    playTrackById(id, currentTimeRef.current);
+  }, [speed, playTrackById]);
+
   // Playback speed sync — apply to both audio elements
   useEffect(() => {
     if (audioRef.current)   audioRef.current.playbackRate   = speed;
@@ -1023,7 +1205,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           "last-session",
           JSON.stringify({
             trackId: id,
-            position: Math.floor(audio.currentTime),
+            position: Math.floor(wasapiTrackIdRef.current === id ? currentTimeRef.current : audio.currentTime),
             playlistId: currentPlaylistIdRef.current,
             playlistType: currentPlaylistTypeRef.current,
             playlistLabel: currentQueueLabelRef.current,
@@ -1045,8 +1227,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const seek = useCallback((time: number) => {
     const audio = audioRef.current;
-    if (!audio) return;
     const safeTime = (typeof time === "number" && isFinite(time) && time >= 0) ? time : 0;
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", safeTime);
+      setCurrentTime(safeTime);
+      return;
+    }
+    if (!audio) return;
     audio.currentTime = safeTime;
     setCurrentTime(safeTime);
   }, []);
@@ -1135,6 +1322,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             duration: meta.duration ?? 0,
             embeddedCoverUrl: meta.coverUrl,
             customCoverUrl,
+            path: (file as File & { path?: string }).path,
+            audioFormat: /\.wav$/i.test(file.name) || /^(audio\/wav|audio\/x-wav)$/i.test(file.type) ? "wav" : "other",
             addedAt,
             playCount,
             lastPlayedAt,
@@ -1149,6 +1338,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             // Copy picker/drag files into ~/Music/Splayer/Downloads/ so we always
             // have a permanent disk path — don't copy if already inside Splayer folder.
             let persistedFilePath = pickerPath;
+            if (persistedFilePath) track.path = persistedFilePath;
             if (pickerPath && platformAPI?.getAppPaths && platformAPI?.copyFile) {
               try {
                 const dirs = await platformAPI.getAppPaths();
@@ -1158,6 +1348,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   const result = await platformAPI.copyFile(pickerPath, dst);
                   if (result.success) {
                     persistedFilePath = dst;
+                    track.path = dst;
                     console.log("[addFiles] copied to Splayer:", dst);
                   }
                 }
@@ -1171,6 +1362,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               fileName: file.name,
               fileType: file.type,
               fileSize: file.size,
+              audioFormat: track.audioFormat,
               addedAt,
               metaTitle: meta.title,
               metaArtist: meta.artist,
@@ -1377,7 +1569,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (queue.length > 1) {
         next();
       } else {
-        // Last track — just stop playback
+        // Last track — stop either the native WASAPI worker or HTML playback.
+        if (wasapiTrackIdRef.current) {
+          wasapiTrackIdRef.current = null;
+          wasapiActiveRef.current = false;
+          wasapiPausedRef.current = false;
+          void platformAPI?.wasapiStop?.();
+        }
         const audio = audioRef.current;
         if (audio) {
           audio.pause();
@@ -1669,15 +1867,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const skipBack = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.max(0, audio.currentTime - (skipBackSecsRef.current ?? 10));
-  }, []);
+    const position = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? currentTime
+      : (audio?.currentTime ?? 0);
+    const target = Math.max(0, position - (skipBackSecsRef.current ?? 10));
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", target);
+      setCurrentTime(target);
+    } else if (audio) {
+      audio.currentTime = target;
+    }
+  }, [currentTime]);
 
   const skipForward = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.min(audio.duration || Infinity, audio.currentTime + (skipForwardSecsRef.current ?? 30));
-  }, []);
+    const position = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? currentTime
+      : (audio?.currentTime ?? 0);
+    const limit = wasapiTrackIdRef.current === currentTrackIdRef.current
+      ? duration
+      : (audio?.duration || Infinity);
+    const target = Math.min(limit || Infinity, position + (skipForwardSecsRef.current ?? 30));
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", target);
+      setCurrentTime(target);
+    } else if (audio) {
+      audio.currentTime = target;
+    }
+  }, [currentTime, duration]);
 
   const skipBackSecsRef    = useRef(skipBackSecs);
   skipBackSecsRef.current  = skipBackSecs;
@@ -1722,15 +1939,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (lost && isPlayingRef.current) {
           // A device disappeared while playing — pause.
           autoPausedRef.current = true;
-          const audio = audioRef.current;
-          if (audio) audio.pause();
+          if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+            wasapiPausedRef.current = true;
+            void platformAPI?.wasapiCommand?.("pause");
+          } else {
+            const audio = audioRef.current;
+            if (audio) audio.pause();
+          }
           setIsPlaying(false);
           toast({ title: "Headphones disconnected — paused" });
         } else if (gained && autoPausedRef.current) {
           // A device appeared and we had auto-paused — resume.
           autoPausedRef.current = false;
-          const audio = audioRef.current;
-          if (audio) audio.play().catch(() => {});
+          if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+            wasapiPausedRef.current = false;
+            void platformAPI?.wasapiCommand?.("resume");
+          } else {
+            const audio = audioRef.current;
+            if (audio) audio.play().catch(() => {});
+          }
           setIsPlaying(true);
           toast({ title: "Headphones reconnected — resumed" });
         }
@@ -1747,6 +1974,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     );
     const audio = audioRef.current;
     if (!audio) return;
+    if (wasapiTrackIdRef.current) {
+      wasapiTrackIdRef.current = null;
+      wasapiActiveRef.current = false;
+      wasapiPausedRef.current = false;
+      void platformAPI?.wasapiStop?.();
+    }
     cancelXf();
     audio.src = track.url;
     audio.load();
@@ -2348,6 +2581,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       for (const [id, info] of toAdd) {
         try { await saveStoredTrack(id, { filePath: info.path }); } catch (_) {}
       }
+      // Patch disk paths onto every in-memory track discovered by this scan.
+      // Newly scanned tracks are created from blobs, so File.path is not preserved
+      // by Chromium; the native WASAPI worker needs this original absolute path.
+      const scannedPaths = new Map<string, string>();
+      for (const [id, info] of foundMap) scannedPaths.set(id, info.path);
+      if (scannedPaths.size > 0) {
+        setTracks(prev => prev.map(track =>
+          (!track.path && scannedPaths.has(track.id))
+            ? { ...track, path: scannedPaths.get(track.id) }
+            : track,
+        ));
+      }
+
       // Backfill: store paths for existing tracks that were found on disk
       // but never had their path recorded (e.g. added before this feature existed).
       const backfilledPaths = new Map<string, string>();

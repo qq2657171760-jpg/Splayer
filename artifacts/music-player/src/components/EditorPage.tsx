@@ -407,7 +407,7 @@ export function EditorPage({ track, onClose }: EditorPageProps) {
         ? [selStart / duration, selEnd / duration]
         : [0, 1];
 
-      drawCanvas(canvas, peaksRef.current, selRef.current as [number, number], playRef.current);
+      drawCanvas(canvas as HTMLCanvasElement, peaksRef.current, selRef.current as [number, number], playRef.current);
       rafRef.current = requestAnimationFrame(tick);
     }
 

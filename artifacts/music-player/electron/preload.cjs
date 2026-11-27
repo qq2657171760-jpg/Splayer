@@ -166,6 +166,21 @@ contextBridge.exposeInMainWorld("electronAPI", {
   /** Open a URL in the user's default browser. */
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 
+  /** Probe active render endpoints and their exact WASAPI exclusive PCM formats. */
+  wasapiProbe: () => ipcRenderer.invoke("wasapi:probe"),
+  /** Start raw PCM exclusive output from a local WAV file. */
+  wasapiStart: (filePath, trackId) => ipcRenderer.invoke("wasapi:start", { filePath, trackId }),
+  /** Stop the active WASAPI stream. */
+  wasapiStop: () => ipcRenderer.invoke("wasapi:stop"),
+  /** Pause, resume, seek, or stop the active WASAPI stream. */
+  wasapiCommand: (command, value) => ipcRenderer.invoke("wasapi:command", { command, value }),
+  /** Receive native output state and progress events. */
+  onWasapiEvent: (cb) => {
+    const handler = (_event, data) => cb(data);
+    ipcRenderer.on("wasapi:event", handler);
+    return () => ipcRenderer.removeListener("wasapi:event", handler);
+  },
+
   /** Push Discord Rich Presence state from the renderer. */
   discordRpcUpdate: (state) => ipcRenderer.send("discord-rpc-update", state),
 

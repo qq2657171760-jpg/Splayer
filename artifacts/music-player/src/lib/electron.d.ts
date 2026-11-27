@@ -162,6 +162,42 @@ declare global {
       /** Enable or disable OS media integration (MPRIS on Linux, SMTC on Windows). */
       setOsMediaEnabled: (enabled: boolean) => void;
 
+      /** Enumerate Windows output devices and exact exclusive-mode PCM formats. */
+      wasapiProbe?: () => Promise<{
+        available: boolean;
+        reason?: string;
+        devices?: Array<{ name: string; id: string; mixFormat: string; exclusiveFormats: string[] }>;
+      }>;
+      /** Start the native WASAPI worker for a local PCM WAV file. */
+      wasapiStart?: (filePath: string, trackId: string) => Promise<{ success: boolean; error?: string }>;
+      /** Stop the current native WASAPI stream. */
+      wasapiStop?: () => Promise<{ success: boolean }>;
+      /** Send a transport command to the WASAPI worker. */
+      wasapiCommand?: (command: "pause" | "resume" | "stop" | "seek", value?: number) => Promise<{ success: boolean; error?: string }>;
+      /** Subscribe to WASAPI ready/progress/fallback/end events. */
+      onWasapiEvent?: (cb: (data: {
+        type: "ready" | "progress" | "paused" | "resumed" | "fallback" | "ended";
+        trackId?: string | null;
+        reason?: string;
+        format?: string;
+        exclusive?: boolean;
+        duration?: number;
+        position?: number;
+      }) => void) => () => void;
+
+      /** Read embedded album artwork for an Android MediaStore URI. */
+      getTrackArt?: (uri: string) => Promise<string>;
+
+      /** Update Android's system media notification/session state. */
+      updateMediaSession?: (opts: {
+        title: string; artist: string; album: string; artBase64: string;
+        isPlaying: boolean; positionMs: number; durationMs: number;
+      }) => Promise<void>;
+      /** Stop the Android system media session. */
+      stopMediaSession?: () => Promise<void>;
+      /** Open Android's native system equalizer UI. */
+      openSystemEqualizer?: () => Promise<void>;
+
       spotifyLogin:      () => Promise<{ success: true } | { error: string }>;
       spotifyLogout:     () => Promise<{ success: true }>;
       spotifyIsLoggedIn: () => Promise<{ loggedIn: boolean }>;

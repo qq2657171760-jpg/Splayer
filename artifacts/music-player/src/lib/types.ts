@@ -17,6 +17,7 @@ export interface Track {
   lastPlayedAt?: number;
   liked?: boolean;
   path?: string;
+  audioFormat?: "wav" | "other";
   hasVideo?: boolean;
   videoPath?: string;
 }

@@ -71,7 +71,7 @@ import { EqualizerBars } from "./EqualizerBars";
 import { DeleteTrackDialog } from "./DeleteTrackDialog";
 import { SelectionActionBar } from "./SelectionActionBar";
 import { JumpToCurrentButton } from "./JumpToCurrentButton";
-import { currentPlatform } from "@/lib/platform-api";
+import { currentPlatform, platformAPI } from "@/lib/platform-api";
 import { showTrackInFolder } from "@/lib/show-in-folder";
 import { useTheme } from "@/lib/theme-context";
 import type { SmartPlaylistKind } from "@/lib/types";
@@ -156,7 +156,7 @@ export function Playlist({
           : "bg-sidebar/40 backdrop-blur",
       )}
     >
-      {currentPlatform !== "android" && (
+      {platformAPI?.platform !== "android" && (
         <div className="flex items-center justify-end px-3 py-0.5 shrink-0">
           {onToggleMini && bv.miniPlayer && (
             <Button
@@ -192,7 +192,7 @@ export function Playlist({
                 <Youtube className="w-4 h-4 mr-2 text-red-500" />
                 From YouTube...
               </DropdownMenuItem>
-              {currentPlatform !== "android" && (
+              {platformAPI?.platform !== "android" && (
                 <DropdownMenuItem onClick={onOpenSpotify}>
                   <span className="w-4 h-4 mr-2 flex items-center justify-center shrink-0">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="#1DB954" aria-hidden>
