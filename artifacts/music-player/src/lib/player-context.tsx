@@ -288,6 +288,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   eqGainsRef.current = eqGains;
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Native Windows WASAPI transport. A non-null track id means the native worker
+  // is starting or owns the current track; the force-shared ref prevents fallback
+  // events from recursively trying WASAPI for the same item.
+  const wasapiTrackIdRef = useRef<string | null>(null);
+  const wasapiActiveRef = useRef(false);
+  const wasapiPausedRef = useRef(false);
+  const wasapiForceSharedTrackRef = useRef<string | null>(null);
   const tracksRef = useRef<Track[]>([]);
   tracksRef.current = tracks;
   const playlistsRef = useRef<Playlist[]>([]);
@@ -613,8 +620,57 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const track = tracksRef.current.find((t) => t.id === trackId)
       ?? ephemeralTracksRef.current.find((t) => t.id === trackId);
     if (!audio || !track) return;
+
+    // On Windows, a local uncompressed WAV is sent to the native WASAPI
+    // worker before the Web Audio graph. It is accepted only at unity rate;
+    // the worker verifies exact source rate/channels/bit depth with the endpoint.
+    const forceShared = wasapiForceSharedTrackRef.current === trackId;
+    if (forceShared) wasapiForceSharedTrackRef.current = null;
+    const sourcePath = track.path ?? (track.file as File & { path?: string }).path;
+    const isWav = /\.wav$/i.test(track.file?.name ?? "");
+    const tryWasapi = !forceShared &&
+      platformAPI?.platform === "win32" &&
+      isWav &&
+      speedRef.current === 1 &&
+      localStorage.getItem("audio-output-mode") !== "shared" &&
+      !!sourcePath &&
+      !!platformAPI.wasapiStart;
+
+    // Terminate the previous native stream before changing the active source.
+    if (wasapiTrackIdRef.current) {
+      void platformAPI?.wasapiStop?.();
+      wasapiTrackIdRef.current = null;
+      wasapiActiveRef.current = false;
+      wasapiPausedRef.current = false;
+    }
     // Cancel any active crossfade
     cancelXf();
+
+    if (tryWasapi) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      countedTrackIdRef.current = null;
+      setCurrentTrackId(trackId);
+      setCurrentTime(0);
+      setDuration(track.duration || 0);
+      wasapiTrackIdRef.current = trackId;
+      wasapiPausedRef.current = false;
+      void platformAPI!.wasapiStart!(sourcePath!, trackId).then((result) => {
+        if (!result.success && wasapiTrackIdRef.current === trackId) {
+          wasapiTrackIdRef.current = null;
+          wasapiForceSharedTrackRef.current = trackId;
+          playTrackById(trackId);
+        }
+      }).catch(() => {
+        if (wasapiTrackIdRef.current === trackId) {
+          wasapiTrackIdRef.current = null;
+          wasapiForceSharedTrackRef.current = trackId;
+          playTrackById(trackId);
+        }
+      });
+      return;
+    }
     const isNewSrc = audio.src !== track.url;
     if (isNewSrc) {
       audio.src = track.url;
@@ -687,6 +743,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    if (wasapiTrackIdRef.current === currentTrackId) {
+      if (!wasapiActiveRef.current) return;
+      const nextPaused = !wasapiPausedRef.current;
+      wasapiPausedRef.current = nextPaused;
+      void platformAPI?.wasapiCommand?.(nextPaused ? "pause" : "resume");
+      setIsPlaying(!nextPaused);
+      return;
+    }
     if (currentTrackId === null) {
       const q = queueRef.current;
       if (q.length > 0) playTrackById(q[0].id);
@@ -735,7 +799,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
     const audio = audioRef.current;
-    if (audio && audio.currentTime > 3) {
+    if (wasapiTrackIdRef.current === currentTrackId) {
+      if (currentTime > 3) { seek(0); return; }
+    } else if (audio && audio.currentTime > 3) {
       audio.currentTime = 0;
       return;
     }
@@ -746,7 +812,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     const p = (idx - 1 + list.length) % list.length;
     playTrackById(list[p].id);
-  }, [currentTrackId, playTrackById]);
+  }, [currentTrackId, playTrackById, currentTime, seek]);
 
   // Stable refs so the onTrayAction handler never captures stale closures.
   const togglePlayRef = useRef(togglePlay);
@@ -787,6 +853,50 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     next();
   }, [repeat, shuffle, currentTrackId, next, playTrackById]);
+
+  // Native WASAPI events share the same state model as the HTML audio path.
+  useEffect(() => {
+    const unsubscribe = platformAPI?.onWasapiEvent?.((event) => {
+      const activeId = wasapiTrackIdRef.current;
+      if (!activeId || event.trackId !== activeId) return;
+      if (event.type === "ready") {
+        wasapiActiveRef.current = true;
+        wasapiPausedRef.current = false;
+        setIsPlaying(true);
+        if (typeof event.duration === "number") setDuration(event.duration);
+        setCurrentTime(0);
+      } else if (event.type === "progress") {
+        if (typeof event.position === "number" && Number.isFinite(event.position)) {
+          setCurrentTime(event.position);
+        }
+        if (typeof event.duration === "number" && Number.isFinite(event.duration)) {
+          setDuration(event.duration);
+        }
+      } else if (event.type === "paused") {
+        wasapiPausedRef.current = true;
+        setIsPlaying(false);
+      } else if (event.type === "resumed") {
+        wasapiPausedRef.current = false;
+        setIsPlaying(true);
+      } else if (event.type === "fallback") {
+        wasapiActiveRef.current = false;
+        wasapiPausedRef.current = false;
+        wasapiTrackIdRef.current = null;
+        wasapiForceSharedTrackRef.current = activeId;
+        if (event.reason) {
+          console.warn("[WASAPI] Falling back to shared playback:", event.reason);
+          toast({ title: "WASAPI 独占输出不可用", description: "已自动切换到共享播放模式" });
+        }
+        playTrackById(activeId);
+      } else if (event.type === "ended") {
+        wasapiActiveRef.current = false;
+        wasapiPausedRef.current = false;
+        setIsPlaying(false);
+        handleEnded();
+      }
+    });
+    return unsubscribe;
+  }, [handleEnded, playTrackById, toast]);
 
   // Audio event listeners — re-attaches when handleEnded changes (i.e. track changes)
   useEffect(() => {
@@ -987,6 +1097,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, [ensureWA]); // ensureWA is stable (useCallback [])
 
+  // Exclusive raw PCM is unity-rate only. Honor a changed speed setting by
+  // stopping WASAPI and restarting through the normal shared/Web Audio path.
+  useEffect(() => {
+    const id = wasapiTrackIdRef.current;
+    if (!id || speed === 1) return;
+    wasapiTrackIdRef.current = null;
+    wasapiActiveRef.current = false;
+    void platformAPI?.wasapiStop?.();
+    wasapiForceSharedTrackRef.current = id;
+    playTrackById(id);
+  }, [speed, playTrackById]);
+
   // Playback speed sync — apply to both audio elements
   useEffect(() => {
     if (audioRef.current)   audioRef.current.playbackRate   = speed;
@@ -1045,8 +1167,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const seek = useCallback((time: number) => {
     const audio = audioRef.current;
-    if (!audio) return;
     const safeTime = (typeof time === "number" && isFinite(time) && time >= 0) ? time : 0;
+    if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+      void platformAPI?.wasapiCommand?.("seek", safeTime);
+      setCurrentTime(safeTime);
+      return;
+    }
+    if (!audio) return;
     audio.currentTime = safeTime;
     setCurrentTime(safeTime);
   }, []);
@@ -1135,6 +1262,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             duration: meta.duration ?? 0,
             embeddedCoverUrl: meta.coverUrl,
             customCoverUrl,
+            path: (file as File & { path?: string }).path,
             addedAt,
             playCount,
             lastPlayedAt,
@@ -1149,6 +1277,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             // Copy picker/drag files into ~/Music/Splayer/Downloads/ so we always
             // have a permanent disk path — don't copy if already inside Splayer folder.
             let persistedFilePath = pickerPath;
+            if (persistedFilePath) track.path = persistedFilePath;
             if (pickerPath && platformAPI?.getAppPaths && platformAPI?.copyFile) {
               try {
                 const dirs = await platformAPI.getAppPaths();
