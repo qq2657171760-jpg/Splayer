@@ -1549,7 +1549,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (queue.length > 1) {
         next();
       } else {
-        // Last track — just stop playback
+        // Last track — stop either the native WASAPI worker or HTML playback.
+        if (wasapiTrackIdRef.current) {
+          wasapiTrackIdRef.current = null;
+          wasapiActiveRef.current = false;
+          wasapiPausedRef.current = false;
+          void platformAPI?.wasapiStop?.();
+        }
         const audio = audioRef.current;
         if (audio) {
           audio.pause();
@@ -1913,15 +1919,25 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (lost && isPlayingRef.current) {
           // A device disappeared while playing — pause.
           autoPausedRef.current = true;
-          const audio = audioRef.current;
-          if (audio) audio.pause();
+          if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+            wasapiPausedRef.current = true;
+            void platformAPI?.wasapiCommand?.("pause");
+          } else {
+            const audio = audioRef.current;
+            if (audio) audio.pause();
+          }
           setIsPlaying(false);
           toast({ title: "Headphones disconnected — paused" });
         } else if (gained && autoPausedRef.current) {
           // A device appeared and we had auto-paused — resume.
           autoPausedRef.current = false;
-          const audio = audioRef.current;
-          if (audio) audio.play().catch(() => {});
+          if (wasapiTrackIdRef.current === currentTrackIdRef.current) {
+            wasapiPausedRef.current = false;
+            void platformAPI?.wasapiCommand?.("resume");
+          } else {
+            const audio = audioRef.current;
+            if (audio) audio.play().catch(() => {});
+          }
           setIsPlaying(true);
           toast({ title: "Headphones reconnected — resumed" });
         }
@@ -1938,6 +1954,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     );
     const audio = audioRef.current;
     if (!audio) return;
+    if (wasapiTrackIdRef.current) {
+      wasapiTrackIdRef.current = null;
+      wasapiActiveRef.current = false;
+      wasapiPausedRef.current = false;
+      void platformAPI?.wasapiStop?.();
+    }
     cancelXf();
     audio.src = track.url;
     audio.load();
