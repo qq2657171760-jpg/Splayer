@@ -388,7 +388,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const ensureWA = useCallback((el: HTMLAudioElement): Promise<void> => {
     // Create context on first call (must happen from a user gesture)
     if (!waCtxRef.current) {
-      const ctx = new AudioContext();
+      const ctx = new AudioContext({ latencyHint: "playback" });
       waCtxRef.current = ctx;
 
       const gains = eqGainsRef.current;
