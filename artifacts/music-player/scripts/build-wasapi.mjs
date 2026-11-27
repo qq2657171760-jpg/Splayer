@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,10 +47,26 @@ if (clOnPath.status === 0) {
   if (!installPath) throw new Error("找不到带 x64 C++ 工具链的 Visual Studio 安装。");
   const devCmd = path.join(installPath, "Common7", "Tools", "VsDevCmd.bat");
   if (!existsSync(devCmd)) throw new Error("找不到 VsDevCmd.bat: " + devCmd);
-  const quoted = common.map((arg) => '"' + arg.replaceAll('"', '""') + '"').join(" ");
-  // cmd.exe /c needs doubled inner quotes when the whole command is quoted.
-  const command = 'call ""' + devCmd + '"" -no_logo -arch=x64 -host_arch=x64 && cl.exe ' + quoted;
-  run("cmd.exe", ["/d", "/s", "/c", '"' + command + '"']);
+
+  // Avoid nested cmd.exe /c quoting: write a temporary batch file so paths
+  // containing spaces are parsed by cmd.exe in their normal quoted form.
+  const quote = (arg) => '"' + arg.replaceAll('"', '""') + '"';
+  const quoted = common.map(quote).join(" ");
+  const batchFile = path.join(outputDir, ".build-wasapi-" + process.pid + ".cmd");
+  const batch = [
+    "@echo off",
+    "call " + quote(devCmd) + " -no_logo -arch=x64 -host_arch=x64",
+    "if errorlevel 1 exit /b 1",
+    "cl.exe " + quoted,
+    "exit /b %errorlevel%",
+    ""
+  ].join("\r\n");
+  writeFileSync(batchFile, batch, "utf8");
+  try {
+    run("cmd.exe", ["/d", "/c", quote(batchFile)]);
+  } finally {
+    if (existsSync(batchFile)) unlinkSync(batchFile);
+  }
 }
 if (!existsSync(output)) throw new Error("MSVC finished without creating " + output);
 console.log("[wasapi] Native worker ready: " + output);
