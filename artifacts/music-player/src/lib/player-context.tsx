@@ -895,12 +895,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       } else if (event.type === "ended") {
         wasapiActiveRef.current = false;
         wasapiPausedRef.current = false;
+        wasapiTrackIdRef.current = null;
         setIsPlaying(false);
-        handleEnded();
+        if (repeat === "one") playTrackById(activeId);
+        else handleEnded();
       }
     });
     return unsubscribe;
-  }, [handleEnded, playTrackById, toast]);
+  }, [handleEnded, playTrackById, toast, repeat]);
 
   // Audio event listeners — re-attaches when handleEnded changes (i.e. track changes)
   useEffect(() => {
