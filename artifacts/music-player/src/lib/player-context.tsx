@@ -777,7 +777,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const activeTrack = currentTrackId
         ? tracksRef.current.find((t) => t.id === currentTrackId)
         : undefined;
-      if (activeTrack && (activeTrack.audioFormat === "wav" || /\\.wav$/i.test(activeTrack.file?.name ?? "")) &&
+            if (activeTrack && (activeTrack.audioFormat === "wav" || /\.wav$/i.test(activeTrack.file?.name ?? "")) &&
           platformAPI?.platform === "win32") {
         playTrackById(activeTrack.id);
         return;
