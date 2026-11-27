@@ -188,6 +188,14 @@ declare global {
       /** Read embedded album artwork for an Android MediaStore URI. */
       getTrackArt?: (uri: string) => Promise<string>;
 
+      /** Update Android's system media notification/session state. */
+      updateMediaSession?: (opts: {
+        title: string; artist: string; album: string; artBase64: string;
+        isPlaying: boolean; positionMs: number; durationMs: number;
+      }) => Promise<void>;
+      /** Stop the Android system media session. */
+      stopMediaSession?: () => Promise<void>;
+
       spotifyLogin:      () => Promise<{ success: true } | { error: string }>;
       spotifyLogout:     () => Promise<{ success: true }>;
       spotifyIsLoggedIn: () => Promise<{ loggedIn: boolean }>;
