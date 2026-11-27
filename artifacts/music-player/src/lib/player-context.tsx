@@ -1047,6 +1047,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (nextIdx === idx) return;
 
       const nextTrack = list[nextIdx];
+      // Let the current item finish naturally before a WAV target so the WAV
+      // always enters the native exclusive route instead of the crossfade graph.
+      if (/\\.wav$/i.test(nextTrack.file?.name ?? "")) return;
       xfActiveRef.current = true;
       stopFades();
 
