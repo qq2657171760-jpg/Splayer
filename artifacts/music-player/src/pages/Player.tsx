@@ -159,11 +159,11 @@ export default function Player() {
       else if (e.key === "s" || e.key === "S") { toggleShuffle(); }
       else if (e.key === "r" || e.key === "R") { cycleRepeat(); }
       else if (e.key === "?")                  { setShortcutsOpen((o) => !o); }
-      else if ((e.key === "p" || e.key === "P") && !isAndroid) { setMiniMode((o) => !o); }
+      else if ((e.key === "p" || e.key === "P") && !isAndroid) { setMiniMode(!miniMode); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, next, prev, toggleMute, toggleShuffle, cycleRepeat]);
+  }, [togglePlay, next, prev, toggleMute, toggleShuffle, cycleRepeat, miniMode, setMiniMode]);
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFiles(Array.from(e.target.files ?? []));
@@ -330,7 +330,7 @@ export default function Player() {
                 onOpenShortcuts={() => setShortcutsOpen(true)}
 
                 miniMode={miniMode}
-                onToggleMini={() => setMiniMode((m) => !m)}
+                onToggleMini={() => setMiniMode(!miniMode)}
                 onOpenEditor={(track) => setEditorTrack(track)}
               />
             </ErrorBoundary>
