@@ -25,6 +25,7 @@ interface StoredTrack {
   liked?: boolean;
   fetchedCover?: Blob;
   filePath?: string;
+  audioFormat?: "wav" | "other";
   hasVideo?: boolean;
   videoPath?: string;
 }
