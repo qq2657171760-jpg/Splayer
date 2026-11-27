@@ -10,6 +10,7 @@ on:
       - "artifacts/music-player/src/**"
       - "artifacts/music-player/electron/**"
       - "artifacts/music-player/package.json"
+      - "artifacts/music-player/tsconfig.json"
       - ".github/workflows/wasapi-build.yml"
   pull_request:
     branches:
