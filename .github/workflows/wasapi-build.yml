@@ -1,0 +1,46 @@
+name: Windows WASAPI and TypeScript validation
+
+on:
+  push:
+    branches:
+      - feature/wasapi-exclusive-zh-cn
+    paths:
+      - "artifacts/music-player/native/wasapi/**"
+      - "artifacts/music-player/scripts/build-wasapi.mjs"
+      - "artifacts/music-player/src/**"
+      - "artifacts/music-player/electron/**"
+      - "artifacts/music-player/package.json"
+      - ".github/workflows/wasapi-build.yml"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript typecheck
+        run: pnpm --filter @workspace/music-player typecheck
+      - name: Compile WASAPI native worker
+        working-directory: artifacts/music-player
+        run: node scripts/build-wasapi.mjs
+      - name: Upload native worker build
+        uses: actions/upload-artifact@v4
+        with:
+          name: splayer-wasapi-x64
+          path: artifacts/music-player/resources/wasapi/splayer-wasapi.exe
+          if-no-files-found: error
