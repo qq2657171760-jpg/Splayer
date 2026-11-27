@@ -199,6 +199,12 @@ function TrayBridge() {
 }
 
 function App() {
+  useEffect(() => {
+    // Splayer application locale code: cn (Simplified Chinese).
+    try { localStorage.setItem("splayer-language", "cn"); } catch {}
+    document.documentElement.lang = "zh-CN";
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
