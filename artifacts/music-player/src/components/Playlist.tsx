@@ -71,7 +71,7 @@ import { EqualizerBars } from "./EqualizerBars";
 import { DeleteTrackDialog } from "./DeleteTrackDialog";
 import { SelectionActionBar } from "./SelectionActionBar";
 import { JumpToCurrentButton } from "./JumpToCurrentButton";
-import { platformAPI } from "@/lib/platform-api";
+import { currentPlatform, platformAPI } from "@/lib/platform-api";
 import { showTrackInFolder } from "@/lib/show-in-folder";
 import { useTheme } from "@/lib/theme-context";
 import type { SmartPlaylistKind } from "@/lib/types";
@@ -192,7 +192,7 @@ export function Playlist({
                 <Youtube className="w-4 h-4 mr-2 text-red-500" />
                 From YouTube...
               </DropdownMenuItem>
-              {currentPlatform !== "android" && (
+              {platformAPI?.platform !== "android" && (
                 <DropdownMenuItem onClick={onOpenSpotify}>
                   <span className="w-4 h-4 mr-2 flex items-center justify-center shrink-0">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="#1DB954" aria-hidden>
