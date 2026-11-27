@@ -2535,6 +2535,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       for (const [id, info] of toAdd) {
         try { await saveStoredTrack(id, { filePath: info.path }); } catch (_) {}
       }
+      // Patch disk paths onto every in-memory track discovered by this scan.
+      // Newly scanned tracks are created from blobs, so File.path is not preserved
+      // by Chromium; the native WASAPI worker needs this original absolute path.
+      const scannedPaths = new Map<string, string>();
+      for (const [id, info] of foundMap) scannedPaths.set(id, info.path);
+      if (scannedPaths.size > 0) {
+        setTracks(prev => prev.map(track =>
+          (!track.path && scannedPaths.has(track.id))
+            ? { ...track, path: scannedPaths.get(track.id) }
+            : track,
+        ));
+      }
+
       // Backfill: store paths for existing tracks that were found on disk
       // but never had their path recorded (e.g. added before this feature existed).
       const backfilledPaths = new Map<string, string>();
