@@ -63,7 +63,7 @@ if (clOnPath.status === 0) {
   ].join("\r\n");
   writeFileSync(batchFile, batch, "utf8");
   try {
-    run("cmd.exe", ["/d", "/c", quote(batchFile)]);
+    run("cmd.exe", ["/d", "/c", "call", batchFile]);
   } finally {
     if (existsSync(batchFile)) unlinkSync(batchFile);
   }
