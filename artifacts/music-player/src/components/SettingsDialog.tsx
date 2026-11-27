@@ -929,7 +929,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="w-4 h-4 text-primary" />
-            Settings
+            设置
           </DialogTitle>
         </DialogHeader>
 
@@ -945,7 +945,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <FolderOpen className="w-3 h-3" />
-            Folders
+            文件夹
           </button>
           <button
             onClick={() => setTab("downloads")}
@@ -957,7 +957,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Download className="w-3 h-3" />
-            DL
+            下载
           </button>
           <button
             onClick={() => setTab("behavior")}
@@ -969,7 +969,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Monitor className="w-3 h-3" />
-            Behavior
+            行为
           </button>
           <button
             onClick={() => setTab("buttons")}
@@ -981,7 +981,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Gamepad2 className="w-3 h-3" />
-            Buttons
+            按键
           </button>
           <button
             onClick={() => setTab("backup")}
@@ -993,7 +993,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             )}
           >
             <Archive className="w-3 h-3" />
-            Backup
+            备份
           </button>
           <button
             onClick={() => setTab("audio")}
@@ -1060,7 +1060,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "downloads" && (
           <div className="py-1 overflow-x-hidden">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Download History
+              下载记录
             </p>
             <DownloadsView />
           </div>
@@ -1073,7 +1073,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               <>
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    App Behavior
+                    应用行为
                   </p>
                   <div className="space-y-5">
                     <StartOnBootSection />
@@ -1084,7 +1084,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                 <hr className="border-card-border" />
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    OS Media
+                    系统媒体
                   </p>
                   <OsMediaSection />
                 </div>
@@ -1100,7 +1100,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                 <hr className="border-card-border" />
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-                    Onboarding
+                    使用引导
                   </p>
                   <Button
                     variant="outline"
@@ -1121,7 +1121,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "buttons" && (
           <div className="py-1 overflow-y-auto max-h-[420px]">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Player Controls
+              播放控制
             </p>
             <ButtonsSection />
           </div>
@@ -1131,7 +1131,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
         {tab === "backup" && (
           <div className="py-1">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              Backup &amp; Restore
+              备份与恢复
             </p>
             <BackupSection />
           </div>
