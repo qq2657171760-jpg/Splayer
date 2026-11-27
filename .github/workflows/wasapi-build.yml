@@ -32,7 +32,7 @@ jobs:
           version: 9
           run_install: false
       - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
       - name: TypeScript typecheck
         run: pnpm --filter @workspace/music-player typecheck
       - name: Compile WASAPI native worker
