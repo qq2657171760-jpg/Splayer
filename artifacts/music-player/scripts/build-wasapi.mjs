@@ -48,7 +48,9 @@ if (clOnPath.status === 0) {
   const devCmd = path.join(installPath, "Common7", "Tools", "VsDevCmd.bat");
   if (!existsSync(devCmd)) throw new Error("找不到 VsDevCmd.bat: " + devCmd);
   const quoted = common.map((arg) => '"' + arg.replaceAll('"', '""') + '"').join(" ");
-  run("cmd.exe", ["/d", "/s", "/c", '"' + devCmd + '" -no_logo -arch=x64 -host_arch=x64 && cl.exe ' + quoted]);
+  // cmd.exe /c needs doubled inner quotes when the whole command is quoted.
+  const command = 'call ""' + devCmd + '"" -no_logo -arch=x64 -host_arch=x64 && cl.exe ' + quoted;
+  run("cmd.exe", ["/d", "/s", "/c", '"' + command + '"']);
 }
 if (!existsSync(output)) throw new Error("MSVC finished without creating " + output);
 console.log("[wasapi] Native worker ready: " + output);
