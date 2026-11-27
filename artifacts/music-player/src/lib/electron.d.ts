@@ -195,6 +195,8 @@ declare global {
       }) => Promise<void>;
       /** Stop the Android system media session. */
       stopMediaSession?: () => Promise<void>;
+      /** Open Android's native system equalizer UI. */
+      openSystemEqualizer?: () => Promise<void>;
 
       spotifyLogin:      () => Promise<{ success: true } | { error: string }>;
       spotifyLogout:     () => Promise<{ success: true }>;
