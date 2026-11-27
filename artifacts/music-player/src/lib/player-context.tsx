@@ -826,8 +826,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
     if (repeat === "one") {
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
+      if (wasapiTrackIdRef.current === currentTrackId && currentTrackId) {
+        playTrackById(currentTrackId);
+      } else {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      }
       return;
     }
     const list = queueRef.current;
@@ -1287,6 +1291,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                   const result = await platformAPI.copyFile(pickerPath, dst);
                   if (result.success) {
                     persistedFilePath = dst;
+                    track.path = dst;
                     console.log("[addFiles] copied to Splayer:", dst);
                   }
                 }
