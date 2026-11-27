@@ -271,7 +271,7 @@ function buildAndroidAPI() {
       }
     },
 
-    onYtProgress(handler) {
+    onYtProgress(handler: (data: { downloaded: number; total: number; percent: number }) => void) {
       let h1: { remove(): void } | null = null;
 
       YtDownloadNative.addListener("ytProgress", handler as (d: { percent: number }) => void)
