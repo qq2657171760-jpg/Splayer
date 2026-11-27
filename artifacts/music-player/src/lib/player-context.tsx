@@ -1362,6 +1362,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               fileName: file.name,
               fileType: file.type,
               fileSize: file.size,
+              audioFormat: track.audioFormat,
               addedAt,
               metaTitle: meta.title,
               metaArtist: meta.artist,
