@@ -185,6 +185,9 @@ declare global {
         position?: number;
       }) => void) => () => void;
 
+      /** Read embedded album artwork for an Android MediaStore URI. */
+      getTrackArt?: (uri: string) => Promise<string>;
+
       spotifyLogin:      () => Promise<{ success: true } | { error: string }>;
       spotifyLogout:     () => Promise<{ success: true }>;
       spotifyIsLoggedIn: () => Promise<{ loggedIn: boolean }>;
