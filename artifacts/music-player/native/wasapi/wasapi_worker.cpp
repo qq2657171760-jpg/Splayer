@@ -400,27 +400,50 @@ int Play(const std::wstring& path) {
     bool paused = false;
     while (!g_stop.load()) {
       DWORD wait = WaitForMultipleObjects(2, waits, FALSE, 1000);
+      if (wait == WAIT_FAILED) {
+        EmitFallback("WASAPI 音频事件等待失败 " + HResultText(HRESULT_FROM_WIN32(GetLastError())));
+        break;
+      }
+      if (wait == WAIT_TIMEOUT) continue;
       if (wait == WAIT_OBJECT_0 + 1) {
         const double seek = g_seek.exchange(-1.0);
         if (seek >= 0.0) {
-          client->Stop(); client->Reset();
+          hr = client->Stop();
+          if (SUCCEEDED(hr)) hr = client->Reset();
+          if (FAILED(hr)) {
+            EmitFallback("WASAPI 定位重置失败 " + HResultText(hr));
+            break;
+          }
           positionFrames = std::min<uint64_t>(totalFrames,
               static_cast<uint64_t>(seek * wav.sampleRate));
           file.clear();
           file.seekg(static_cast<std::streamoff>(wav.dataOffset + positionFrames * wav.blockAlign));
-          if (!paused) client->Start();
+          if (!paused) {
+            hr = client->Start();
+            if (FAILED(hr)) {
+              EmitFallback("WASAPI 定位后恢复失败 " + HResultText(hr));
+              break;
+            }
+          }
           Emit("{\"type\":\"progress\",\"position\":" +
               std::to_string(static_cast<double>(positionFrames) / wav.sampleRate) + "}");
         }
         const bool shouldPause = g_pause.load();
         if (shouldPause != paused) {
+          const HRESULT controlHr = shouldPause ? client->Stop() : client->Start();
+          if (FAILED(controlHr)) {
+            EmitFallback(std::string(shouldPause ? "WASAPI 暂停失败 " : "WASAPI 恢复失败 ") + HResultText(controlHr));
+            break;
+          }
           paused = shouldPause;
-          if (paused) client->Stop(); else client->Start();
           Emit(paused ? "{\"type\":\"paused\"}" : "{\"type\":\"resumed\"}");
         }
         continue;
       }
-      if (wait != WAIT_OBJECT_0) continue;
+      if (wait != WAIT_OBJECT_0) {
+        EmitFallback("WASAPI 等待返回未知状态");
+        break;
+      }
       if (paused || g_stop.load()) continue;
 
       // Do not signal natural end until the last submitted PCM buffer has
@@ -429,7 +452,11 @@ int Play(const std::wstring& path) {
       if (positionFrames >= totalFrames) {
         UINT32 paddingFrames = 0;
         hr = client->GetCurrentPadding(&paddingFrames);
-        if (SUCCEEDED(hr) && paddingFrames == 0) {
+        if (FAILED(hr)) {
+          EmitFallback("WASAPI 查询缓冲队列失败 " + HResultText(hr));
+          break;
+        }
+        if (paddingFrames == 0) {
           Emit("{\"type\":\"ended\"}");
           g_stop.store(true);
           break;
