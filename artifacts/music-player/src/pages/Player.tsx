@@ -416,7 +416,7 @@ export default function Player() {
                     onOpenSettings={() => setSettingsOpen(true)}
                     onOpenShortcuts={() => setShortcutsOpen(true)}
                     miniMode={miniMode}
-                    onToggleMini={() => setMiniMode((m) => !m)}
+                    onToggleMini={() => setMiniMode(!miniMode)}
                     onOpenEditor={(track) => setEditorTrack(track)}
                   />
                 </ErrorBoundary>
