@@ -199,16 +199,6 @@ function TrayBridge() {
 }
 
 function App() {
-  useEffect(() => {
-    let language = "cn";
-    try {
-      language = localStorage.getItem("splayer-language") || "cn";
-      if (language !== "cn") language = "cn";
-      localStorage.setItem("splayer-language", language);
-    } catch {}
-    document.documentElement.lang = language === "cn" ? "zh-CN" : "en";
-  }, []);
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
