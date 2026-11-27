@@ -32,7 +32,6 @@ function _stopWasapiWorker() {
   _wasapiTrackId = null;
   _wasapiSawTerminalEvent = true;
   if (!worker) return;
-  try { worker.stdin.write("stop\\n"); } catch {}
   try { worker.kill(); } catch {}
 }
 
@@ -1043,6 +1042,7 @@ ipcMain.handle("wasapi:start", async (event, { filePath, trackId } = {}) => {
   _wasapiSawTerminalEvent = false;
   let stdoutBuffer = "";
   child.stdout.on("data", (chunk) => {
+    if (_wasapiProcess !== child) return;
     stdoutBuffer += chunk.toString("utf8");
     let newline;
     while ((newline = stdoutBuffer.indexOf("\n")) >= 0) {
@@ -1060,8 +1060,9 @@ ipcMain.handle("wasapi:start", async (event, { filePath, trackId } = {}) => {
   });
   child.stderr.on("data", (chunk) => console.warn("[WASAPI]", chunk.toString("utf8").trim()));
   child.on("error", (err) => {
+    if (_wasapiProcess !== child) return;
     _sendWasapiEvent({ type: "fallback", reason: "WASAPI 组件启动失败：" + err.message });
-    if (_wasapiProcess === child) _wasapiProcess = null;
+    _wasapiProcess = null;
   });
   child.on("close", (code) => {
     // Ignore exit notifications from a previous stream after a rapid track change.
