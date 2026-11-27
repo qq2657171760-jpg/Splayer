@@ -1064,7 +1064,9 @@ ipcMain.handle("wasapi:start", async (event, { filePath, trackId } = {}) => {
     if (_wasapiProcess === child) _wasapiProcess = null;
   });
   child.on("close", (code) => {
-    if (_wasapiProcess === child) _wasapiProcess = null;
+    // Ignore exit notifications from a previous stream after a rapid track change.
+    if (_wasapiProcess !== child) return;
+    _wasapiProcess = null;
     if (!_wasapiSawTerminalEvent && code !== 0) {
       _sendWasapiEvent({ type: "fallback", reason: "WASAPI 工作进程异常退出，已回退共享播放（代码 " + code + "）" });
     }
