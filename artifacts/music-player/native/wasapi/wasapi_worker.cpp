@@ -60,8 +60,9 @@ std::string Utf8(const wchar_t* value) {
   if (!value || !*value) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
   if (size <= 1) return {};
-  std::string out(static_cast<size_t>(size - 1), '\0');
+  std::string out(static_cast<size_t>(size), '\0');
   WideCharToMultiByte(CP_UTF8, 0, value, -1, out.data(), size, nullptr, nullptr);
+  out.resize(static_cast<size_t>(size - 1));
   return out;
 }
 
@@ -354,20 +355,23 @@ int Play(const std::wstring& path) {
   uint64_t positionFrames = 0;
   g_stop.store(false); g_pause.store(false); g_seek.store(-1.0);
   g_controlEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-  std::thread input(InputThread);
+  if (!g_controlEvent) {
+    EmitFallback("无法创建 WASAPI 控制事件");
+    if (audioEvent) CloseHandle(audioEvent);
+    SafeRelease(render); SafeRelease(client); SafeRelease(device); SafeRelease(enumerator);
+    return 2;
+  }
   DWORD taskIndex = 0;
   mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
-  Emit("{\"type\":\"ready\",\"exclusive\":true,\"format\":" +
-      JsonEscape(FormatLabel(wav.sampleRate, wav.bits, wav.channels, wav.isFloat)) +
-      ",\"duration\":" + std::to_string(static_cast<double>(totalFrames) / wav.sampleRate) + "}");
 
   hr = client->Start();
   if (FAILED(hr)) {
-    g_stop.store(true);
-    if (g_controlEvent) SetEvent(g_controlEvent);
-    if (input.joinable()) input.join();
     EmitFallback("WASAPI 启动失败 " + HResultText(hr));
   } else {
+    std::thread input(InputThread);
+    Emit("{\"type\":\"ready\",\"exclusive\":true,\"format\":" +
+        JsonEscape(FormatLabel(wav.sampleRate, wav.bits, wav.channels, wav.isFloat)) +
+        ",\"duration\":" + std::to_string(static_cast<double>(totalFrames) / wav.sampleRate) + "}");
     HANDLE waits[] = {audioEvent, g_controlEvent};
     auto lastProgress = std::chrono::steady_clock::now();
     bool paused = false;
@@ -434,16 +438,16 @@ int Play(const std::wstring& path) {
       }
     }
     client->Stop();
-    if (input.joinable()) {
-      g_stop.store(true);
-      if (g_controlEvent) SetEvent(g_controlEvent);
-      // stdin remains open in the parent; detach only after stop to avoid waiting for EOF.
-      input.detach();
-    }
+    g_stop.store(true);
+    if (g_controlEvent) SetEvent(g_controlEvent);
+    // stdin remains open in Electron while playback runs. Do not block audio teardown
+    // waiting for EOF; the child process is exiting immediately after this function.
+    if (input.joinable()) input.detach();
   }
 
   if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-  if (g_controlEvent) { CloseHandle(g_controlEvent); g_controlEvent = nullptr; }
+  // Keep the control event alive until process exit so the detached stdin reader
+  // cannot signal a closed/recycled HANDLE during shutdown.
   if (audioEvent) CloseHandle(audioEvent);
   SafeRelease(render); SafeRelease(client); SafeRelease(device); SafeRelease(enumerator);
   return 0;
