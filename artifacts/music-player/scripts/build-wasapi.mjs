@@ -17,7 +17,7 @@ mkdirSync(outputDir, { recursive: true });
 
 const common = [
   "/nologo", "/std:c++17", "/EHsc", "/O2", "/MT", "/W4",
-  "/DUNICODE", "/D_UNICODE", "/D_WIN32_WINNT=0x0601",
+  "/DUNICODE", "/D_UNICODE", "/D_WIN32_WINNT=0x0601", "/utf-8",
   source,
   "/link", "ole32.lib", "uuid.lib", "propsys.lib", "avrt.lib",
   "/OUT:" + output,
