@@ -617,7 +617,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const queueRef = useRef<Track[]>([]);
   queueRef.current = effectiveQueue;
 
-  const playTrackById = useCallback((trackId: string) => {
+  const playTrackById = useCallback((trackId: string, startAt = 0) => {
     const audio = audioRef.current;
     const track = tracksRef.current.find((t) => t.id === trackId)
       ?? ephemeralTracksRef.current.find((t) => t.id === trackId);
@@ -633,6 +633,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const tryWasapi = !forceShared &&
       platformAPI?.platform === "win32" &&
       isWav &&
+      startAt <= 0 &&
       speedRef.current === 1 &&
       localStorage.getItem("audio-output-mode") !== "shared" &&
       !!sourcePath &&
@@ -685,13 +686,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     // audio if the context hasn't resumed yet.
     const effVol = mutedRef.current ? 0 : volumeRef.current;
     ensureWA(audio).then(() => {
-      if (isNewSrc && crossfadeEnabledRef.current && !mutedRef.current) {
-        audio.volume = 0;
-        audio.play().catch(() => {});
-        rampVolume(audio, 0, effVol, crossfadeSecsRef.current * 1000);
+      const startPlayback = () => {
+        if (startAt > 0) {
+          const boundedPosition = Math.min(
+            startAt,
+            Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : startAt,
+          );
+          try { audio.currentTime = boundedPosition; } catch {}
+          setCurrentTime(boundedPosition);
+        }
+        if (isNewSrc && crossfadeEnabledRef.current && !mutedRef.current) {
+          audio.volume = 0;
+          audio.play().catch(() => {});
+          rampVolume(audio, 0, effVol, crossfadeSecsRef.current * 1000);
+        } else {
+          audio.volume = effVol;
+          audio.play().catch(() => {});
+        }
+      };
+      if (startAt > 0 && audio.readyState < HTMLMediaElement.HAVE_METADATA) {
+        audio.addEventListener("loadedmetadata", startPlayback, { once: true });
       } else {
-        audio.volume = effVol;
-        audio.play().catch(() => {});
+        startPlayback();
       }
     });
   }, [cancelXf, rampVolume, ensureWA]);
@@ -923,11 +939,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         wasapiPausedRef.current = false;
         wasapiTrackIdRef.current = null;
         wasapiForceSharedTrackRef.current = activeId;
+        const fallbackPosition = currentTimeRef.current;
         if (event.reason) {
           console.warn("[WASAPI] Falling back to shared playback:", event.reason);
           toast({ title: "WASAPI 独占输出不可用", description: "已自动切换到共享播放模式" });
         }
-        playTrackById(activeId);
+        playTrackById(activeId, fallbackPosition);
       } else if (event.type === "ended") {
         wasapiActiveRef.current = false;
         wasapiPausedRef.current = false;
@@ -1151,7 +1168,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     wasapiActiveRef.current = false;
     void platformAPI?.wasapiStop?.();
     wasapiForceSharedTrackRef.current = id;
-    playTrackById(id);
+    playTrackById(id, currentTimeRef.current);
   }, [speed, playTrackById]);
 
   // Playback speed sync — apply to both audio elements
