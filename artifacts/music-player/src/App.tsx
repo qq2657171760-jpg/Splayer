@@ -200,9 +200,13 @@ function TrayBridge() {
 
 function App() {
   useEffect(() => {
-    // Splayer application locale code: cn (Simplified Chinese).
-    try { localStorage.setItem("splayer-language", "cn"); } catch {}
-    document.documentElement.lang = "zh-CN";
+    let language = "cn";
+    try {
+      language = localStorage.getItem("splayer-language") || "cn";
+      if (language !== "cn") language = "cn";
+      localStorage.setItem("splayer-language", language);
+    } catch {}
+    document.documentElement.lang = language === "cn" ? "zh-CN" : "en";
   }, []);
 
   return (
