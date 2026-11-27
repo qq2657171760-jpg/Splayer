@@ -3,6 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 export type AppLanguage = "cn" | "en";
 
 const STORAGE_KEY = "splayer-language";
+const originalText = new WeakMap<Node, { source: string; translated: string }>();
+const originalAttributes = new WeakMap<Element, Map<string, { source: string; translated: string }>>();
 
 const messages: Record<string, { cn: string; en: string }> = {
   "Settings": { cn: "设置", en: "Settings" },
@@ -124,24 +126,44 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     document.documentElement.lang = language === "cn" ? "zh-CN" : "en";
     const localizeNode = (node: Node) => {
-      if (language !== "cn") return;
       if (node.nodeType === Node.TEXT_NODE) {
-        const original = node.textContent ?? "";
-        const trimmed = original.trim();
-        const translated = messages[trimmed]?.cn;
-        if (translated && node.textContent !== translated) {
-          const leading = original.match(/^\\s*/)?.[0] ?? "";
-          const trailing = original.match(/\\s*$/)?.[0] ?? "";
-          node.textContent = leading + translated + trailing;
+        const current = node.textContent ?? "";
+        const previous = originalText.get(node);
+        const source = previous && current === previous.translated ? previous.source : current;
+        const trimmed = source.trim();
+        const translated = language === "cn" ? messages[trimmed]?.cn : undefined;
+        if (translated && translated !== trimmed) {
+          const leading = source.match(/^\\s*/)?.[0] ?? "";
+          const trailing = source.match(/\\s*$/)?.[0] ?? "";
+          const next = leading + translated + trailing;
+          originalText.set(node, { source, translated: next });
+          if (current !== next) node.textContent = next;
+        } else if (previous && current === previous.translated && language === "en") {
+          originalText.set(node, { source, translated: source });
+          if (current !== source) node.textContent = source;
         }
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
       const element = node as Element;
+      let saved = originalAttributes.get(element);
+      if (!saved) {
+        saved = new Map();
+        originalAttributes.set(element, saved);
+      }
       for (const attribute of ["title", "placeholder", "aria-label"]) {
-        const value = element.getAttribute(attribute);
-        const translated = value ? messages[value]?.cn : undefined;
-        if (translated && translated !== value) element.setAttribute(attribute, translated);
+        const current = element.getAttribute(attribute);
+        if (current === null) continue;
+        const previous = saved.get(attribute);
+        const source = previous && current === previous.translated ? previous.source : current;
+        const translated = language === "cn" ? messages[source]?.cn : undefined;
+        if (translated && translated !== source) {
+          saved.set(attribute, { source, translated });
+          if (current !== translated) element.setAttribute(attribute, translated);
+        } else if (previous && current === previous.translated && language === "en") {
+          saved.set(attribute, { source, translated: source });
+          if (current !== source) element.setAttribute(attribute, source);
+        }
       }
       for (const child of Array.from(node.childNodes)) localizeNode(child);
     };
